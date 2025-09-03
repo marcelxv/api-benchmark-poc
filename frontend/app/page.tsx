@@ -49,9 +49,15 @@ export default function Home() {
   const [loadingThroughput, setLoadingThroughput] = useState(false);
   const [winner, setWinner] = useState<'typescript' | 'rust' | null>(null);
   const [throughputWinner, setThroughputWinner] = useState<'typescript' | 'rust' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [throughputError, setThroughputError] = useState<string | null>(null);
 
-  const TS_API_URL = process.env.NEXT_PUBLIC_TS_API_URL || 'http://localhost:8080';
-  const RUST_API_URL = process.env.NEXT_PUBLIC_RUST_API_URL || 'http://localhost:8081';
+  const TS_API_URL = process.env.NEXT_PUBLIC_TS_API_URL;
+  const RUST_API_URL = process.env.NEXT_PUBLIC_RUST_API_URL;
+
+  if (!TS_API_URL || !RUST_API_URL) {
+    throw new Error('API URLs not configured. Please set NEXT_PUBLIC_TS_API_URL and NEXT_PUBLIC_RUST_API_URL environment variables.');
+  }
 
   useEffect(() => {
     if (tsResult && rustResult) {
@@ -75,9 +81,10 @@ export default function Home() {
         document_text: documentText
       });
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Error benchmarking ${apiName}:`, error);
-      return null;
+      const errorMessage = error.response?.data?.message || error.message || `Failed to connect to ${apiName} API`;
+      throw new Error(`${apiName} API Error: ${errorMessage}`);
     }
   };
 
@@ -102,61 +109,91 @@ export default function Home() {
         averageLatency: Math.round(averageLatency * 100) / 100,
         totalTime: Math.round(totalTime)
       };
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Throughput test failed for ${apiName}:`, error);
-      return null;
+      const errorMessage = error.response?.data?.message || error.message || `Failed to connect to ${apiName} API`;
+      throw new Error(`${apiName} Throughput Test Error: ${errorMessage}`);
     }
   };
 
   const handleBenchmarkTS = async () => {
     setLoading(true);
     setWinner(null);
-    const result = await benchmarkAPI(TS_API_URL, 'TypeScript');
-    setTsResult(result);
-    setLoading(false);
+    setError(null);
+    try {
+      const result = await benchmarkAPI(TS_API_URL, 'TypeScript');
+      setTsResult(result);
+    } catch (err: any) {
+      setError(err.message);
+      setTsResult(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleBenchmarkRust = async () => {
     setLoading(true);
     setWinner(null);
-    const result = await benchmarkAPI(RUST_API_URL, 'Rust');
-    setRustResult(result);
-    setLoading(false);
+    setError(null);
+    try {
+      const result = await benchmarkAPI(RUST_API_URL, 'Rust');
+      setRustResult(result);
+    } catch (err: any) {
+      setError(err.message);
+      setRustResult(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleBothBenchmarks = async () => {
     setLoading(true);
     setWinner(null);
-    const [ts, rust] = await Promise.all([
-      benchmarkAPI(TS_API_URL, 'TypeScript'),
-      benchmarkAPI(RUST_API_URL, 'Rust')
-    ]);
-    setTsResult(ts);
-    setRustResult(rust);
-    setLoading(false);
+    setError(null);
+    try {
+      const [ts, rust] = await Promise.all([
+        benchmarkAPI(TS_API_URL, 'TypeScript'),
+        benchmarkAPI(RUST_API_URL, 'Rust')
+      ]);
+      setTsResult(ts);
+      setRustResult(rust);
+    } catch (err: any) {
+      setError(err.message);
+      setTsResult(null);
+      setRustResult(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleThroughputTest = async () => {
     if (!documentText) {
-      alert('Please enter a document text');
+      setThroughputError('Please enter a document text');
       return;
     }
     
     setLoadingThroughput(true);
     setThroughputResults([]);
     setThroughputWinner(null);
+    setThroughputError(null);
     
-    const [tsThrough, rustThrough] = await Promise.all([
-      runThroughputTest(TS_API_URL, 'TypeScript'),
-      runThroughputTest(RUST_API_URL, 'Rust')
-    ]);
-    
-    const results = [];
-    if (tsThrough) results.push(tsThrough);
-    if (rustThrough) results.push(rustThrough);
-    
-    setThroughputResults(results);
-    setLoadingThroughput(false);
+    try {
+      const [tsThrough, rustThrough] = await Promise.all([
+        runThroughputTest(TS_API_URL, 'TypeScript'),
+        runThroughputTest(RUST_API_URL, 'Rust')
+      ]);
+      
+      const results = [];
+      if (tsThrough) results.push(tsThrough);
+      if (rustThrough) results.push(rustThrough);
+      
+      setThroughputResults(results);
+    } catch (err: any) {
+      setThroughputError(err.message);
+      setThroughputResults([]);
+    } finally {
+      setLoadingThroughput(false);
+    }
   };
 
   const getSpeedupFactor = () => {
@@ -250,6 +287,24 @@ export default function Home() {
             </motion.button>
           </div>
         </motion.div>
+
+        {/* Error Display */}
+        <AnimatePresence>
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="bg-red-900/30 backdrop-blur-lg rounded-lg p-4 border border-red-500 mb-6"
+            >
+              <div className="flex items-center gap-2 text-red-400">
+                <XCircle className="w-5 h-5" />
+                <span className="font-semibold">API Error:</span>
+                <span>{error}</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
           <AnimatePresence>
@@ -420,6 +475,24 @@ export default function Home() {
               )}
             </motion.button>
           </div>
+
+          {/* Throughput Error Display */}
+          <AnimatePresence>
+            {throughputError && (
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="bg-red-900/30 backdrop-blur-lg rounded-lg p-4 border border-red-500 mb-6"
+              >
+                <div className="flex items-center gap-2 text-red-400">
+                  <XCircle className="w-5 h-5" />
+                  <span className="font-semibold">Throughput Test Error:</span>
+                  <span>{throughputError}</span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {throughputResults.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
